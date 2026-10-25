@@ -1,1 +1,67 @@
+name: Build APK
 
+on:
+  push:
+    branches: ['**']
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Chuẩn bị mã nguồn
+        run: |
+          ZIP=$(ls *.zip 2>/dev/null | head -n1 || true)
+          if [ -n "$ZIP" ]; then
+            rm -rf _build && mkdir _build
+            unzip -q "$ZIP" -d _build
+            echo "PROJ=_build" >> "$GITHUB_ENV"
+          elif [ -f settings.gradle.kts ]; then
+            echo "PROJ=." >> "$GITHUB_ENV"
+          else
+            echo "Không thấy file .zip của dự án trong repo. Hãy upload DonRac.zip rồi chạy lại."
+            exit 1
+          fi
+
+      - uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Cài Gradle 8.9
+        run: |
+          curl -fsSL https://services.gradle.org/distributions/gradle-8.9-bin.zip -o "$RUNNER_TEMP/gradle.zip"
+          unzip -q "$RUNNER_TEMP/gradle.zip" -d "$HOME"
+          echo "$HOME/gradle-8.9/bin" >> "$GITHUB_PATH"
+
+      - name: Cài Android SDK còn thiếu
+        run: |
+          SDKM="$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager"
+          yes | "$SDKM" --licenses > /dev/null || true
+          "$SDKM" "platforms;android-35" "build-tools;34.0.0" > /dev/null || true
+
+      - name: Build APK
+        working-directory: ${{ env.PROJ }}
+        run: gradle --no-daemon --console=plain assembleRelease
+
+      - name: Gom APK
+        run: cp "$PROJ/app/build/outputs/apk/release/app-release.apk" DonRac.apk
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: DonRac-apk
+          path: DonRac.apk
+
+      - name: Đăng APK lên Releases
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "build-${{ github.run_number }}-${{ github.run_attempt }}" DonRac.apk \
+            --title "DonRac #${{ github.run_number }}" \
+            --notes "APK đã ký sẵn, tải về và cài trực tiếp." \
+            --target "${{ github.sha }}"
